@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  role      String
+  phone     String?
+  createdAt DateTime @default(now())
+
+  listings  FoodListing[]
+  claims    FoodClaim[]
+}
+
+model FoodListing {
+  id             String   @id @default(cuid())
+  foodName       String
+  quantity       Float
+  servings       Int
+  preparedAt     DateTime
+  pickupDeadline DateTime
+  storageInfo    String
+  allergens      String?
+  status         String   @default("POSTED")
+  createdAt      DateTime @default(now())
+
+  donorId        String
+  donor          User     @relation(fields: [donorId], references: [id])
+  claims         FoodClaim[]
+}
+
+model FoodClaim {
+  id         String   @id @default(cuid())
+  quantity   Float
+  status     String   @default("CLAIMED")
+  createdAt  DateTime @default(now())
+
+  listingId  String
+  listing    FoodListing @relation(fields: [listingId], references: [id])
+
+  receiverId String
+  receiver   User     @relation(fields: [receiverId], references: [id])
+}

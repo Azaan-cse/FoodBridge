@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/donationform.tsx","./src/components/icons.tsx","./src/design/tokens.ts","./src/lib/api.ts","./src/pages/donordashboardpage.tsx","./src/pages/homepage.tsx","./src/pages/receiverdashboardpage.tsx"],"version":"5.9.3"}

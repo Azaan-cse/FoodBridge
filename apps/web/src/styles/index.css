@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-cream text-slate font-body;
+}
+
+h1,
+h2,
+h3 {
+  @apply font-heading;
+}
