@@ -5,3 +5,6 @@ dist
 *.db-journal
 .vite
 .codebenders/
+
+apps/api/foodbridge-export.json
+apps/api/import-data.cjs
