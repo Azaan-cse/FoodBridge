@@ -3,14 +3,11 @@ import { Prisma, type FoodClaim } from "@prisma/client";
 import prisma from "./prisma";
 
 const TOLERANCE = 1e-9;
-// Remaining quantities at or below this are treated as fully reserved.
 const RESERVED_EPSILON = 0.0005;
 const MAX_ATTEMPTS = 3;
-// Delay before retry N (N = 1 for the first retry). Three attempts need two waits.
 const RETRY_DELAYS_MS = [50, 100];
 const CLAIM_ID_PATTERN = /^[0-9a-fA-F-]{36}$/;
 
-// Shared shape of the prisma client and an interactive transaction client.
 type Db = Pick<Prisma.TransactionClient, "foodClaim">;
 
 export class ClaimError extends Error {
@@ -82,12 +79,15 @@ export function validateClaimId(value: unknown): string | null {
   return null;
 }
 
-// Sum of quantities that still count as reserved (CLAIMED or COLLECTED).
 async function sumReserved(db: Db, listingId: string): Promise<number> {
   const agg = await db.foodClaim.aggregate({
-    where: { listingId, status: { in: ["CLAIMED", "COLLECTED"] } },
+    where: {
+      listingId,
+      status: { in: ["CLAIMED", "COLLECTED"] },
+    },
     _sum: { quantity: true },
   });
+
   return agg._sum.quantity ?? 0;
 }
 
@@ -148,6 +148,7 @@ async function runClaimTransaction(
       const existing = await tx.foodClaim.findUnique({
         where: { id: input.claimId },
       });
+
       if (existing) {
         if (
           existing.listingId !== input.listingId ||
@@ -155,16 +156,19 @@ async function runClaimTransaction(
         ) {
           throw new ClaimError(409, "Claim id already used");
         }
-        // Duplicate submission of a claim that already went through.
+
         const sameListing = await tx.foodListing.findUnique({
           where: { id: input.listingId },
         });
+
         const reserved = await sumReserved(tx, input.listingId);
+
         return {
           claim: existing,
-          remainingQuantity: computeRemaining(sameListing?.quantity ?? 0, [
-            reserved,
-          ]),
+          remainingQuantity: computeRemaining(
+            sameListing?.quantity ?? 0,
+            [reserved]
+          ),
           created: false,
         };
       }
@@ -173,6 +177,7 @@ async function runClaimTransaction(
     const listing = await tx.foodListing.findUnique({
       where: { id: input.listingId },
     });
+
     if (!listing) {
       throw new ClaimError(404, "Listing not found");
     }
@@ -180,6 +185,7 @@ async function runClaimTransaction(
     const receiver = await tx.user.findUnique({
       where: { id: input.receiverId },
     });
+
     if (!receiver) {
       throw new ClaimError(404, "Receiver not found");
     }
@@ -193,28 +199,41 @@ async function runClaimTransaction(
     }
 
     const reservedBefore = await sumReserved(tx, listing.id);
-    const remainingBefore = computeRemaining(listing.quantity, [reservedBefore]);
+    const remainingBefore = computeRemaining(listing.quantity, [
+      reservedBefore,
+    ]);
+
     if (input.quantity > remainingBefore + TOLERANCE) {
       throw new ClaimError(409, "Only " + remainingBefore + " remaining");
     }
 
-    // Atomic guard: the availability check and the insert are one SQLite
-    // statement, so a concurrent claim cannot overbook the listing.
-    // Prisma stores DateTime in SQLite as integer milliseconds, so the raw
-    // SQL uses epoch-ms numbers for createdAt and the deadline comparison.
+    // PostgreSQL stores DateTime values as timestamps.
+    // Use JavaScript Date objects instead of epoch milliseconds.
     const id = input.claimId ?? randomUUID();
-    const nowMs = Date.now();
+    const now = new Date();
+
     const inserted = await tx.$executeRaw`
-      INSERT INTO "FoodClaim" ("id","quantity","status","createdAt","listingId","receiverId")
-      SELECT ${id}, ${input.quantity}, 'CLAIMED', ${nowMs}, l."id", ${input.receiverId}
+      INSERT INTO "FoodClaim"
+        ("id", "quantity", "status", "createdAt", "listingId", "receiverId")
+      SELECT
+        ${id},
+        ${input.quantity},
+        'CLAIMED',
+        ${now},
+        l."id",
+        ${input.receiverId}
       FROM "FoodListing" l
       WHERE l."id" = ${input.listingId}
         AND l."status" = 'POSTED'
-        AND l."pickupDeadline" > ${nowMs}
+        AND l."pickupDeadline" > ${now}
         AND ${input.quantity} <= ROUND(
           l."quantity" - COALESCE(
-            (SELECT SUM(c."quantity") FROM "FoodClaim" c
-             WHERE c."listingId" = l."id" AND c."status" IN ('CLAIMED','COLLECTED')),
+            (
+              SELECT SUM(c."quantity")
+              FROM "FoodClaim" c
+              WHERE c."listingId" = l."id"
+                AND c."status" IN ('CLAIMED', 'COLLECTED')
+            ),
             0
           ),
           6
@@ -222,7 +241,6 @@ async function runClaimTransaction(
     `;
 
     if (inserted === 0) {
-      // A concurrent claim (or status change) won the race.
       throw new ClaimError(
         409,
         "Listing no longer has enough remaining quantity"
@@ -230,7 +248,9 @@ async function runClaimTransaction(
     }
 
     const reservedAfter = await sumReserved(tx, listing.id);
-    const remainingQuantity = computeRemaining(listing.quantity, [reservedAfter]);
+    const remainingQuantity = computeRemaining(listing.quantity, [
+      reservedAfter,
+    ]);
 
     if (remainingQuantity <= RESERVED_EPSILON) {
       await tx.foodListing.updateMany({
@@ -239,7 +259,10 @@ async function runClaimTransaction(
       });
     }
 
-    const claim = await tx.foodClaim.findUnique({ where: { id } });
+    const claim = await tx.foodClaim.findUnique({
+      where: { id },
+    });
+
     if (!claim) {
       throw new Error("Claim was written but could not be read back");
     }
@@ -258,6 +281,7 @@ export async function claimListingQuantity(
       if (attempt >= MAX_ATTEMPTS || !isRetryableError(error)) {
         throw error;
       }
+
       await sleep(RETRY_DELAYS_MS[attempt - 1]);
     }
   }
@@ -271,6 +295,7 @@ export async function cancelClaim(input: {
     const existing = await tx.foodClaim.findUnique({
       where: { id: input.claimId },
     });
+
     if (!existing) {
       throw new ClaimError(404, "Claim not found");
     }
@@ -291,6 +316,7 @@ export async function cancelClaim(input: {
       where: { id: existing.id, status: "CLAIMED" },
       data: { status: "CANCELLED" },
     });
+
     if (updated.count === 0) {
       throw new ClaimError(409, "Claim state changed, retry");
     }
@@ -298,9 +324,11 @@ export async function cancelClaim(input: {
     const listing = await tx.foodListing.findUnique({
       where: { id: existing.listingId },
     });
+
     if (listing) {
       const reserved = await sumReserved(tx, listing.id);
       const remaining = computeRemaining(listing.quantity, [reserved]);
+
       if (listing.status === "CLAIMED" && remaining > RESERVED_EPSILON) {
         await tx.foodListing.updateMany({
           where: { id: listing.id, status: "CLAIMED" },
@@ -312,6 +340,7 @@ export async function cancelClaim(input: {
     const claim = await tx.foodClaim.findUnique({
       where: { id: existing.id },
     });
+
     if (!claim) {
       throw new Error("Cancelled claim could not be read back");
     }
