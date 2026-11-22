@@ -207,8 +207,6 @@ async function runClaimTransaction(
       throw new ClaimError(409, "Only " + remainingBefore + " remaining");
     }
 
-    // PostgreSQL stores DateTime values as timestamps.
-    // Use JavaScript Date objects instead of epoch milliseconds.
     const id = input.claimId ?? randomUUID();
     const now = new Date();
 
@@ -226,16 +224,18 @@ async function runClaimTransaction(
       WHERE l."id" = ${input.listingId}
         AND l."status" = 'POSTED'
         AND l."pickupDeadline" > ${now}
-        AND ${input.quantity} <= ROUND(
-          l."quantity" - COALESCE(
-            (
-              SELECT SUM(c."quantity")
-              FROM "FoodClaim" c
-              WHERE c."listingId" = l."id"
-                AND c."status" IN ('CLAIMED', 'COLLECTED')
-            ),
-            0
-          ),
+        AND ${input.quantity}::numeric <= ROUND(
+          (
+            l."quantity" - COALESCE(
+              (
+                SELECT SUM(c."quantity")
+                FROM "FoodClaim" c
+                WHERE c."listingId" = l."id"
+                  AND c."status" IN ('CLAIMED', 'COLLECTED')
+              ),
+              0
+            )
+          )::numeric,
           6
         )
     `;
