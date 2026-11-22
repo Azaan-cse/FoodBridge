@@ -24,19 +24,36 @@ export type NewListingInput = {
   donorId: string;
 };
 
-type ApiBody = { success?: boolean; message?: string; listings?: Listing[]; listing?: Listing };
+const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+
+function apiUrl(path: string): string {
+  return `${API_BASE_URL}${path}`;
+}
+
+type ApiBody = {
+  success?: boolean;
+  message?: string;
+  listings?: Listing[];
+  listing?: Listing;
+};
 
 async function request(url: string, init?: RequestInit): Promise<ApiBody> {
   let res: Response;
+
   try {
-    res = await fetch(url, init);
+    res = await fetch(apiUrl(url), init);
   } catch {
-    throw new Error("Cannot reach the FoodBridge API. Check that the API server is running.");
+    throw new Error(
+      "Cannot reach the FoodBridge API. Check that the API server is running."
+    );
   }
+
   const body = (await res.json().catch(() => ({}))) as ApiBody;
+
   if (!res.ok || !body.success) {
     throw new Error(body.message ?? `Request failed (HTTP ${res.status}).`);
   }
+
   return body;
 }
 
@@ -51,10 +68,13 @@ export async function createListing(input: NewListingInput): Promise<Listing> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
-  if (!body.listing) throw new Error("The API did not return the new donation.");
+
+  if (!body.listing) {
+    throw new Error("The API did not return the new donation.");
+  }
+
   return body.listing;
 }
-
 
 export type ReceiverListing = {
   id: string;
@@ -84,28 +104,46 @@ export type CreateFoodClaimInput = {
   claimId: string;
 };
 
-type DataBody<T> = { success?: boolean; message?: string; data?: T };
+type DataBody<T> = {
+  success?: boolean;
+  message?: string;
+  data?: T;
+};
 
-async function requestData<T>(url: string, init?: RequestInit): Promise<T> {
+async function requestData<T>(
+  url: string,
+  init?: RequestInit
+): Promise<T> {
   let res: Response;
+
   try {
-    res = await fetch(url, init);
+    res = await fetch(apiUrl(url), init);
   } catch {
-    throw new Error("Cannot reach the FoodBridge API. Check that the API server is running.");
+    throw new Error(
+      "Cannot reach the FoodBridge API. Check that the API server is running."
+    );
   }
+
   const body = (await res.json().catch(() => ({}))) as DataBody<T>;
+
   if (!res.ok || !body.success || body.data === undefined) {
     throw new Error(body.message ?? `Request failed (HTTP ${res.status}).`);
   }
+
   return body.data;
 }
 
 export async function getReceiverListings(): Promise<ReceiverListing[]> {
-  const data = await requestData<ReceiverListing[]>("/api/receiver/listings");
+  const data = await requestData<ReceiverListing[]>(
+    "/api/receiver/listings"
+  );
+
   return data ?? [];
 }
 
-export async function createFoodClaim(input: CreateFoodClaimInput): Promise<FoodClaimResult> {
+export async function createFoodClaim(
+  input: CreateFoodClaimInput
+): Promise<FoodClaimResult> {
   return requestData<FoodClaimResult>("/api/food-claims", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -115,7 +153,7 @@ export async function createFoodClaim(input: CreateFoodClaimInput): Promise<Food
 
 export async function cancelFoodClaim(
   claimId: string,
-  receiverId: string,
+  receiverId: string
 ): Promise<{ claim: FoodClaimResult["claim"] }> {
   return requestData<{ claim: FoodClaimResult["claim"] }>(
     `/api/food-claims/${encodeURIComponent(claimId)}/cancel`,
@@ -123,7 +161,6 @@ export async function cancelFoodClaim(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ receiverId }),
-    },
+    }
   );
 }
-
